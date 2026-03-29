@@ -16,6 +16,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import type { Cliente } from "@/types/cliente"
+import { getApiBaseUrl } from "@/lib/api-config"
 
 interface ClientDialogProps {
   open: boolean
@@ -55,7 +56,8 @@ export function ClientDialog({ open, onClose, client }: ClientDialogProps) {
     setIsSubmitting(true)
 
     try {
-      const url = client ? `/api/cliente/${client.id}` : "/api/cliente"
+      const base = getApiBaseUrl()
+      const url = `${base}/cliente`
       const method = client ? "PUT" : "POST"
       const body = client ? JSON.stringify({ id: client.id, ...formData }) : JSON.stringify(formData)
 

@@ -8,13 +8,18 @@ services:
     ports:
       - "8080:8080"
     environment:
-      - SPRING_PROFILES_ACTIVE=prod
+      # H2 em memória (application-local.yml). Para Oracle, use profile prod + variáveis JDBC ou suba azure/oracle.
+      - SPRING_PROFILES_ACTIVE=local
 
   frontend:
     build:
       context: ./solarmetrics
       dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: http://backend:8080
     ports:
       - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://backend:8080
     depends_on:
       - backend

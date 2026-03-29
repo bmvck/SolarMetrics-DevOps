@@ -34,6 +34,7 @@ class ClienteControllerTest {
                 .email("carlos@gmail.com")
                 .telefone("11972935394")
                 .tipoUser("Residencial")
+                .status("ATIVO")
                 .build();
 
         String param = "sadajsdkad";

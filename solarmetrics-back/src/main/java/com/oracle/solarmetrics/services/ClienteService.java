@@ -23,11 +23,17 @@ public class ClienteService implements ClienteServiceInterface {
     }
 
     public Cliente update(Cliente cliente) {
-        getId(cliente.getId());
+        Cliente existente = getId(cliente.getId());
         if (clienteRepository.findByEmail(cliente.getEmail()).filter(c -> !c.getId().equals(cliente.getId())).isPresent()) {
             throw new IllegalArgumentException("O e-mail já está em uso.");
         }
-        return clienteRepository.save(cliente);
+        Cliente merged = existente.toBuilder()
+                .nome(cliente.getNome())
+                .email(cliente.getEmail())
+                .telefone(cliente.getTelefone())
+                .tipoUser(cliente.getTipoUser())
+                .build();
+        return clienteRepository.save(merged);
     }
 
     public Cliente getId(String id) {
@@ -45,12 +51,11 @@ public class ClienteService implements ClienteServiceInterface {
 
     public Cliente patch(String id, Cliente cliente) {
         Cliente clienteExistente = getId(id);
-        Cliente clienteAtualizado = Cliente.builder()
-                .id(clienteExistente.getId())
+        Cliente clienteAtualizado = clienteExistente.toBuilder()
                 .nome(cliente.getNome() != null ? cliente.getNome() : clienteExistente.getNome())
                 .email(cliente.getEmail() != null ? cliente.getEmail() : clienteExistente.getEmail())
                 .telefone(cliente.getTelefone() != null ? cliente.getTelefone() : clienteExistente.getTelefone())
-                .tipoUser(clienteExistente.getTipoUser())
+                .tipoUser(cliente.getTipoUser() != null ? cliente.getTipoUser() : clienteExistente.getTipoUser())
                 .build();
         if (clienteRepository.findByEmail(clienteAtualizado.getEmail()).filter(c -> !c.getId().equals(clienteAtualizado.getId())).isPresent()) {
             throw new IllegalArgumentException("O e-mail já está em uso.");

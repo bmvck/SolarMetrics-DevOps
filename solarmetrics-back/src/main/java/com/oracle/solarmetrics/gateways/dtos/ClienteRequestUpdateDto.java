@@ -26,7 +26,7 @@ public class ClienteRequestUpdateDto {
     @NotNull
     private String tipoUser;
 
-    public Cliente toCliente(){
+    public Cliente toCliente() {
         return Cliente.builder()
                 .id(id)
                 .email(email)

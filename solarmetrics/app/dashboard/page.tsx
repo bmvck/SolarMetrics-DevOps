@@ -8,6 +8,7 @@ import { Sun, Plus, Users } from "lucide-react"
 import { ClientTable } from "@/components/client-table"
 import { ClientDialog } from "@/components/client-dialog"
 import type { Cliente } from "@/types/cliente"
+import { getApiBaseUrl } from "@/lib/api-config"
 
 export default function DashboardPage() {
   const [clients, setClients] = useState<Cliente[]>([])
@@ -18,7 +19,8 @@ export default function DashboardPage() {
   const fetchClients = async () => {
     try {
       setIsLoading(true)
-      const response = await fetch("/api/cliente")
+      const base = getApiBaseUrl()
+      const response = await fetch(`${base}/cliente`)
       if (response.ok) {
         const data = await response.json()
         setClients(data)
@@ -43,7 +45,8 @@ export default function DashboardPage() {
     if (!confirm("Tem certeza que deseja excluir este cliente?")) return
 
     try {
-      const response = await fetch(`/api/cliente/${id}`, {
+      const base = getApiBaseUrl()
+      const response = await fetch(`${base}/cliente/${id}`, {
         method: "DELETE",
       })
       if (response.ok) {

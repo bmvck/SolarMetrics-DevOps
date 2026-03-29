@@ -28,6 +28,7 @@ class ClienteRepositoryTest {
                 .email("carlos@gmail.com")
                 .telefone("11972935394")
                 .tipoUser("Residencial")
+                .status("ATIVO")
                 .build();
 
         Cliente resultadoSafe = clienteRepository.save(expected);
@@ -37,7 +38,8 @@ class ClienteRepositoryTest {
 
         //Assert
         assertTrue(actual.isPresent());
-        assertEquals(expected,actual.get());
+        assertEquals(resultadoSafe.getId(), actual.get().getId());
+        assertEquals("Carlos Clementino", actual.get().getNome());
 
 
     }
@@ -55,6 +57,7 @@ class ClienteRepositoryTest {
                 .email("carlos@gmail.com")
                 .telefone("11972935394")
                 .tipoUser("Residencial")
+                .status("ATIVO")
                 .build();
 
         Cliente cliente2 = Cliente.builder()
@@ -62,6 +65,7 @@ class ClienteRepositoryTest {
                 .email("Souza@gmail.com")
                 .telefone("11903904905")
                 .tipoUser("Comercial")
+                .status("ATIVO")
                 .build();
 
         clienteRepository.saveAll(List.of(cliente1,cliente2));

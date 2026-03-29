@@ -23,12 +23,13 @@ public class ClienteRequestDto {
     @NotNull
     private String tipoUser;
 
-    public Cliente toCliente(){
+    public Cliente toCliente() {
         return Cliente.builder()
                 .email(email)
                 .nome(nome)
                 .telefone(telefone)
                 .tipoUser(tipoUser)
+                .status("ATIVO")
                 .build();
     }
 }

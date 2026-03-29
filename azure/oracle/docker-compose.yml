@@ -1,0 +1,22 @@
+# Oracle XE 21 no padrão gs-cloud (https://github.com/bmvck/gs-cloud).
+# Uso: VM Linux no Azure com Docker; abrir NSG para 1521 (restrito aos App Services quando possível).
+
+services:
+  oracledb:
+    image: gvenzl/oracle-xe:21-slim
+    container_name: sm-oracle
+    restart: unless-stopped
+    environment:
+      ORACLE_PASSWORD: ${ORACLE_PASSWORD:-gspassword}
+      ORACLE_DATABASE: ${ORACLE_DATABASE:-GSDB}
+      APP_USER: ${APP_USER:-GSUSER}
+      APP_USER_PASSWORD: ${APP_USER_PASSWORD:-gspassword}
+      TZ: America/Sao_Paulo
+    ports:
+      - "1521:1521"
+    volumes:
+      - oracle_data:/opt/oracle/oradata
+      - ./oracledb/db-init:/docker-entrypoint-initdb.d
+
+volumes:
+  oracle_data:
