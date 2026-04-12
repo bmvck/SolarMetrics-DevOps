@@ -4,6 +4,9 @@
 
 Este repositório concentra o **script de infraestrutura e deploy**, **DDL de referência**, **documentação de arquitetura** e **amostras HTTP** para o ecossistema SolarMetrics. **O fluxo oficial é apenas o script Bash** [`deploy-azure-solarmetrics.sh`](deploy-azure-solarmetrics.sh).
 
+Video Demonstração: https://vimeo.com/1182450375
+
+
 ## Deploy único na Azure (recomendado)
 
 | Recurso | Descrição |
