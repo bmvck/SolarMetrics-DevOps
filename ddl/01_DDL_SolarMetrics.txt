@@ -1,0 +1,137 @@
+-- ===============================================================
+-- Projeto:       SolarMetrics 2.0 (alinhado ao SolarMetrics-JavaAdvanced)
+-- Sprint:        3 - DDL (tabelas, PK/FK, comentários)
+-- Execução:      Primeiro script da cadeia (ver README.md)
+-- PKs:           coluna ID (campo @Id "id" no JPA / Hibernate)
+-- Fonte:         https://github.com/bmvck/SolarMetrics-BancoDados (01_DDL.sql)
+-- ===============================================================
+
+CREATE SEQUENCE SEQ_SM_AUDITORIA
+    START WITH 1
+    INCREMENT BY 1
+    NOCACHE
+    NOCYCLE;
+
+-- Autenticação Spring Security (entidade Usuario -> SM_LOGIN)
+CREATE TABLE SM_LOGIN (
+    USERNAME    VARCHAR2(200)  NOT NULL,
+    PASSWORD    VARCHAR2(200)  NOT NULL,
+    CONSTRAINT PK_SM_LOGIN PRIMARY KEY (USERNAME)
+);
+
+COMMENT ON TABLE SM_LOGIN IS 'Credenciais de login (UserDetails); username costuma ser o e-mail do cliente.';
+
+-- Roles (@ElementCollection List<String> roles -> tabela de junção padrão Hibernate 6)
+CREATE TABLE SM_LOGIN_ROLES (
+    SM_LOGIN_USERNAME  VARCHAR2(200) NOT NULL,
+    ROLES              VARCHAR2(100) NOT NULL,
+    CONSTRAINT PK_SM_LOGIN_ROLES PRIMARY KEY (SM_LOGIN_USERNAME, ROLES),
+    CONSTRAINT FK_LOGIN_ROLES_LOGIN FOREIGN KEY (SM_LOGIN_USERNAME)
+        REFERENCES SM_LOGIN (USERNAME)
+);
+
+COMMENT ON TABLE SM_LOGIN_ROLES IS 'Papéis ROLE_* do usuário (ElementCollection).';
+
+-- Cliente (entidade Cliente -> SM_USUARIO)
+CREATE TABLE SM_USUARIO (
+    ID                  VARCHAR2(36)   NOT NULL,
+    EMAIL               VARCHAR2(200)  NOT NULL,
+    NOME                VARCHAR2(200)  NOT NULL,
+    TELEFONE            VARCHAR2(30),
+    TIPO_USER           VARCHAR2(50),
+    USUARIO_USERNAME    VARCHAR2(200),
+    CONSTRAINT PK_SM_USUARIO PRIMARY KEY (ID),
+    CONSTRAINT UK_SM_USUARIO_EMAIL UNIQUE (EMAIL),
+    CONSTRAINT FK_USUARIO_LOGIN FOREIGN KEY (USUARIO_USERNAME)
+        REFERENCES SM_LOGIN (USERNAME)
+);
+
+COMMENT ON TABLE SM_USUARIO IS 'Cliente cadastrado (dados de perfil); opcionalmente ligado a SM_LOGIN.';
+COMMENT ON COLUMN SM_USUARIO.USUARIO_USERNAME IS 'FK OneToOne para SM_LOGIN.USERNAME.';
+
+CREATE TABLE SM_SISTEMA (
+    ID                  VARCHAR2(36)   NOT NULL,
+    NOME_INSTALACAO     VARCHAR2(200)  NOT NULL,
+    DATA_INSTALACAO     DATE           NOT NULL,
+    POTENCIA_TOTAL      NUMBER(10)     NOT NULL,
+    STATUS              VARCHAR2(20)   NOT NULL,
+    CLIENTE_ID          VARCHAR2(36)   NOT NULL,
+    CONSTRAINT PK_SM_SISTEMA PRIMARY KEY (ID),
+    CONSTRAINT FK_SIS_CLIENTE FOREIGN KEY (CLIENTE_ID)
+        REFERENCES SM_USUARIO (ID)
+);
+
+COMMENT ON TABLE SM_SISTEMA IS 'Sistema de geração solar (ManyToOne Cliente).';
+COMMENT ON COLUMN SM_SISTEMA.STATUS IS 'Valores do enum: ATIVO, INATIVO.';
+COMMENT ON COLUMN SM_SISTEMA.POTENCIA_TOTAL IS 'Potência instalada total (inteiro, conforme entidade Java).';
+
+-- Credenciais do sensor (entidade SensorLogin -> SM_SENSOR_LOGIN)
+CREATE TABLE SM_SENSOR_LOGIN (
+    USERNAME      VARCHAR2(200)  NOT NULL,
+    PASSWORD      VARCHAR2(200)  NOT NULL,
+    IS_SUPERUSER  NUMBER(1)      DEFAULT 0 NOT NULL,
+    CONSTRAINT PK_SM_SENSOR_LOGIN PRIMARY KEY (USERNAME),
+    CONSTRAINT CK_SM_SENSOR_LOGIN_SU CHECK (IS_SUPERUSER IN (0, 1))
+);
+
+COMMENT ON TABLE SM_SENSOR_LOGIN IS 'Login do sensor (NumericBooleanConverter: 0/1).';
+
+CREATE TABLE SM_SENSOR (
+    ID                       VARCHAR2(36)   NOT NULL,
+    TIPO                     VARCHAR2(50)    NOT NULL,
+    STATUS                   VARCHAR2(50)    NOT NULL,
+    LOCALIZACAO              VARCHAR2(200),
+    SISTEMA_ID               VARCHAR2(36)    NOT NULL,
+    SENSOR_LOGIN_USERNAME    VARCHAR2(200),
+    CONSTRAINT PK_SM_SENSOR PRIMARY KEY (ID),
+    CONSTRAINT FK_SENSOR_SISTEMA FOREIGN KEY (SISTEMA_ID)
+        REFERENCES SM_SISTEMA (ID),
+    CONSTRAINT FK_SENSOR_SENSOR_LOGIN FOREIGN KEY (SENSOR_LOGIN_USERNAME)
+        REFERENCES SM_SENSOR_LOGIN (USERNAME),
+    CONSTRAINT UK_SENSOR_LOGIN UNIQUE (SENSOR_LOGIN_USERNAME)
+);
+
+COMMENT ON TABLE SM_SENSOR IS 'Sensores vinculados a um sistema; login opcional OneToOne.';
+
+CREATE TABLE SM_PAINEL_SOLAR (
+    ID                       VARCHAR2(36)   NOT NULL,
+    MODELO                   VARCHAR2(100)  NOT NULL,
+    FABRICANTE               VARCHAR2(100)  NOT NULL,
+    POTENCIA_MAXIMA          NUMBER(10)     NOT NULL,
+    DATA_FABRICACAO          DATE           NOT NULL,
+    EFICIENCIA               NUMBER(10)     NOT NULL,
+    SISTEMA_ID               VARCHAR2(36)   NOT NULL,
+    CONSTRAINT PK_SM_PAINEL_SOLAR PRIMARY KEY (ID),
+    CONSTRAINT FK_PAINEL_SISTEMA FOREIGN KEY (SISTEMA_ID)
+        REFERENCES SM_SISTEMA (ID)
+);
+
+COMMENT ON TABLE SM_PAINEL_SOLAR IS 'Painéis por sistema (campos da entidade PainelSolar).';
+
+CREATE TABLE SM_MONITORAMENTO (
+    ID                       VARCHAR2(36)   NOT NULL,
+    PERIODO                  DATE           NOT NULL,
+    VALOR_LIDO               NUMBER(10)     NOT NULL,
+    MEDIA_LEITURA            NUMBER(10)     NOT NULL,
+    MAXIMA_LEITURA           NUMBER(10)     NOT NULL,
+    SENSOR_ID                VARCHAR2(36)   NOT NULL,
+    CONSTRAINT PK_SM_MONITORAMENTO PRIMARY KEY (ID),
+    CONSTRAINT FK_MON_SENSOR FOREIGN KEY (SENSOR_ID)
+        REFERENCES SM_SENSOR (ID)
+);
+
+COMMENT ON TABLE SM_MONITORAMENTO IS 'Registros de monitoramento por sensor (entidade Monitoramento).';
+
+CREATE TABLE SM_AUDITORIA (
+    ID_AUDITORIA     NUMBER         NOT NULL,
+    NOME_TABELA      VARCHAR2(128)  NOT NULL,
+    OPERACAO         VARCHAR2(10)   NOT NULL,
+    USUARIO_ORACLE   VARCHAR2(128)  NOT NULL,
+    DATA_OPERACAO    TIMESTAMP      DEFAULT SYSTIMESTAMP NOT NULL,
+    DADOS_OLD        CLOB,
+    DADOS_NEW        CLOB,
+    CONSTRAINT PK_SM_AUDITORIA PRIMARY KEY (ID_AUDITORIA),
+    CONSTRAINT CK_SM_AUD_OPERACAO CHECK (OPERACAO IN ('INSERT', 'UPDATE', 'DELETE'))
+);
+
+COMMENT ON TABLE SM_AUDITORIA IS 'Auditoria OLD/NEW (Sprint 3).';

@@ -1,7 +1,0 @@
-spring:
-  jpa:
-    show-sql: true
-  application:
-    name: solarmetrics
-  profiles:
-    active: ${PROFILE:local}

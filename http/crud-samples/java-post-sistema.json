@@ -1,0 +1,7 @@
+{
+  "nomeInstalacao": "Usina Demo SP",
+  "dataInstalacao": "2024-06-15",
+  "potenciaTotal": 10,
+  "status": "ATIVO",
+  "clienteId": "SUBSTITUA_PELO_ID_DO_CLIENTE_CRIADO"
+}

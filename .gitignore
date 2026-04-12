@@ -1,0 +1,34 @@
+# Secrets e ambientes locais
+.env
+.env.*
+*.secrets
+**/local.settings.json
+
+# Wallet Oracle extraído (nunca commitar chaves)
+wallet/
+**/wallet/
+**/Wallet_*/
+cwallet.sso
+ewallet.p12
+keystore.jks
+sqlnet.ora
+tnsnames.ora
+ojdbc.properties
+
+# Artefatos temporários do deploy local
+.deploy-work*/
+**/.deploy-work-*/
+
+# Front Next.js (opcional, pasta solarmetrics/)
+solarmetrics/node_modules/
+solarmetrics/.next/
+solarmetrics/out/
+
+# Build Maven (cópia local solarmetrics-back/)
+solarmetrics-back/target/
+
+# Ferramentas / IDE
+.idea/
+.vscode/
+*.swp
+Thumbs.db
