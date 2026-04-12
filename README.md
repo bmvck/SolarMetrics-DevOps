@@ -4,10 +4,6 @@
 
 Este repositório concentra o **script de infraestrutura e deploy**, **DDL de referência**, **documentação de arquitetura** e **amostras HTTP** para o ecossistema SolarMetrics. **O fluxo oficial é apenas o script Bash** [`deploy-azure-solarmetrics.sh`](deploy-azure-solarmetrics.sh).
 
-
-https://solarmetrics-web.azurewebsites.net/
-
-
 ## Deploy único na Azure (recomendado)
 
 | Recurso | Descrição |
@@ -48,32 +44,56 @@ Modo recomendado na nuvem: **Azure Cloud Shell** (Bash) + `WALLET_URL` apontando
 
 ## Arquitetura na Azure (visão geral)
 
+Visão em **camadas** (tipo organograma): utilizadores → aplicações no **mesmo App Service Plan** → serviços de suporte na assinatura → **Oracle ATP** fora da Azure. O **wallet** TLS acompanha os pacotes publicados nas Web Apps.
+
+![Diagrama visual da arquitetura SolarMetrics na Azure](docs/arquitetura-azure-solarmetrics.png)
+
 ```mermaid
-flowchart LR
-  subgraph users [Clientes]
-    Browser[Navegador]
+flowchart TB
+  subgraph camada1 [Camada_1_Acesso]
+    usr[Utilizadores HTTPS]
   end
-  subgraph azure [Azure eastus2]
-    AppJava[App_Service_Java]
-    AppApi[App_Service_API_NET]
-    AppWeb[App_Service_Web_MVC]
-    Aci[RabbitMQ_ACI]
-    Ai[Application_Insights]
+
+  subgraph camada2 [Camada_2_Azure_eastus2]
+    subgraph rg [Resource_group]
+      subgraph asp [App_Service_Plan_Linux_B1]
+        direction LR
+        wj[solarmetrics-java API Spring Boot 17]
+        wa[solarmetrics-api ASP.NET 8]
+        ww[solarmetrics-web MVC Razor]
+      end
+      subgraph suporte [Servicos_auxiliares_RG]
+        direction TB
+        rmq[RabbitMQ ACI]
+        ins[Application Insights]
+      end
+    end
   end
-  subgraph oci [Oracle_Cloud]
-    Atp[Autonomous_Database]
+
+  subgraph camada3 [Camada_3_Oracle_Cloud]
+    atp[("Autonomous ATP JDBC ODP wallet")]
   end
-  Browser --> AppJava
-  Browser --> AppApi
-  Browser --> AppWeb
-  AppWeb -->|HTTPS_JWT_e_REST| AppApi
-  AppJava -->|JDBC_wallet| Atp
-  AppApi -->|ODP_NET_wallet| Atp
-  AppJava -->|AMQP| Aci
-  AppJava -.-> Ai
-  AppApi -.-> Ai
-  AppWeb -.-> Ai
+
+  usr --> wj
+  usr --> wa
+  usr --> ww
+  ww -->|POST auth JWT REST| wa
+  ww -->|ODP wallet| atp
+  wa -->|ODP wallet| atp
+  wj -->|JDBC TCPS wallet| atp
+  wj -->|AMQP 5672| rmq
+  wj -.->|telemetria| ins
+  wa -.->|telemetria| ins
+  ww -.->|telemetria| ins
 ```
+
+**Legenda dos fluxos**
+
+| Fluxo | Descrição |
+|-------|-----------|
+| Setas cheias | Tráfego de aplicação: **HTTPS** do cliente às APIs e ao MVC; **REST + JWT** do painel MVC para a API .NET; **JDBC / ODP.NET** com wallet para o Oracle; **AMQP** da API Java para o RabbitMQ. |
+| Linhas tracejadas | **Telemetria** (requests, dependências, exceções) enviada ao Application Insights. |
+| Três Web Apps | Partilham o **mesmo plano B1**; nomes configuráveis (`WEBAPP_*`). |
 
 ## Variáveis úteis (resumo)
 
