@@ -6,6 +6,8 @@ Este repositório concentra o **script de infraestrutura e deploy**, **DDL de re
 
 Video Demonstração: https://vimeo.com/1182450375
 
+https://solarmetrics-web.azurewebsites.net/
+
 
 ## Deploy único na Azure (recomendado)
 
