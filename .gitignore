@@ -1,3 +1,7 @@
+# Wallet Oracle zip (usar WALLET_URL na pipeline; nunca commitar)
+**/Wallet_*.zip
+step-by-step-cloud/Wallet_*.zip
+
 # Secrets e ambientes locais
 .env
 .env.*

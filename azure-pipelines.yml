@@ -1,0 +1,392 @@
+# SolarMetrics — Pipeline CI/CD única (Aula 19: criarInfra → BuildApp → DeployApp)
+# Secrets no Azure DevOps (Variables): WALLET_URL, ORACLE_PASSWORD; opcional JWT_KEY
+# Service connection Azure: ajuste azureServiceConnection (padrão MyAzureSubscription)
+
+trigger:
+  branches:
+    include:
+      - main
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  azureServiceConnection: MyAzureSubscription
+  azureSubscription: Azure for Students
+  resourceGroup: rg-solarmetrics-cloud
+  location: eastus2
+  appInsightsName: ai-solarmetrics
+  servicePlan: plan-solarmetrics-linux
+  appServiceSku: B1
+  webappJava: solarmetrics-java
+  webappApi: solarmetrics-api
+  webappWeb: solarmetrics-web
+  rabbitContainer: aci-solarmetrics-rabbitmq
+  rabbitDns: solarmetrics-rmq
+  gitUrlJava: https://github.com/ARC-ceo/SolarMetrics-JavaAdvanced.git
+  gitUrlDotnet: https://github.com/bmvck/SolarMetrics-Dotnet.git
+  gitBranch: main
+  oracleUser: ADMIN
+  oracleServiceTns: tad4hz13pj8xyhaw_high
+  oracleWalletDir: /home/site/wwwroot/wallet
+  oracleJdbcUrl: jdbc:oracle:thin:@(description=(retry_count=20)(retry_delay=3)(address=(protocol=tcps)(port=1521)(host=adb.sa-saopaulo-1.oraclecloud.com))(connect_data=(service_name=tad4hz13pj8xyhaw_high.adb.oraclecloud.com))(security=(ssl_server_dn_match=yes)))
+  artifactApi: solarmetrics-api
+  artifactWeb: solarmetrics-web
+  artifactJava: solarmetrics-java
+
+stages:
+  - stage: criarInfra
+    displayName: Criar ou atualizar infraestrutura Azure
+    jobs:
+      - job: provisionarRecursos
+        displayName: RG, Insights, Plano, RabbitMQ e Web Apps
+        steps:
+          - task: AzureCLI@2
+            displayName: Provisionar infra SolarMetrics
+            inputs:
+              azureSubscription: $(azureServiceConnection)
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                set -euo pipefail
+                RG="$(resourceGroup)"
+                LOC="$(location)"
+                SUB="$(azureSubscription)"
+                if [[ -n "${SUB}" ]]; then
+                  az account set --subscription "${SUB}"
+                fi
+                az account show --query "{name:name, id:id}" -o table
+
+                az group create --name "${RG}" --location "${LOC}" --output none
+
+                if ! az monitor app-insights component show --app "$(appInsightsName)" --resource-group "${RG}" &>/dev/null; then
+                  az monitor app-insights component create \
+                    --app "$(appInsightsName)" --location "${LOC}" --resource-group "${RG}" \
+                    --application-type web --output none
+                fi
+                AI_CS="$(az monitor app-insights component show --app "$(appInsightsName)" --resource-group "${RG}" --query connectionString -o tsv)"
+
+                if ! az appservice plan show --name "$(servicePlan)" --resource-group "${RG}" &>/dev/null; then
+                  az appservice plan create --name "$(servicePlan)" --resource-group "${RG}" \
+                    --location "${LOC}" --sku "$(appServiceSku)" --is-linux --output none
+                fi
+
+                if ! az container show --name "$(rabbitContainer)" --resource-group "${RG}" &>/dev/null; then
+                  az container create --resource-group "${RG}" --location "${LOC}" \
+                    --name "$(rabbitContainer)" --image rabbitmq:3-management --os-type Linux \
+                    --dns-name-label "$(rabbitDns)" --ports 5672 15672 --cpu 1 --memory 1.5 \
+                    --environment-variables RABBITMQ_DEFAULT_USER=admin RABBITMQ_DEFAULT_PASS=admin RABBITMQ_DEFAULT_VHOST=email \
+                    --output none
+                fi
+                RABBIT_FQDN="$(az container show --name "$(rabbitContainer)" --resource-group "${RG}" --query ipAddress.fqdn -o tsv)"
+                echo "RabbitMQ: ${RABBIT_FQDN}:5672"
+
+                for ENTRY in "$(webappJava)|JAVA:17-java17" "$(webappApi)|DOTNETCORE:8.0" "$(webappWeb)|DOTNETCORE:8.0"; do
+                  APP_NAME="${ENTRY%%|*}"
+                  RUNTIME="${ENTRY#*|}"
+                  if ! az webapp show --name "${APP_NAME}" --resource-group "${RG}" &>/dev/null; then
+                    az webapp create --name "${APP_NAME}" --resource-group "${RG}" \
+                      --plan "$(servicePlan)" --runtime "${RUNTIME}" --output none
+                  fi
+                  az resource update --resource-group "${RG}" --namespace Microsoft.Web \
+                    --resource-type basicPublishingCredentialsPolicies --parent "sites/${APP_NAME}" --name scm \
+                    --set properties.allow=true --output none
+                done
+
+                ORACLE_PASS="${ORACLE_PASSWORD:?Defina ORACLE_PASSWORD nas Variables da pipeline}"
+                JWT_KEY="${JWT_KEY:-SolarMetrics_Dev_Only_Change_In_Production_32Chars!!}"
+                DOTNET_CONN="User Id=$(oracleUser);Password=${ORACLE_PASS};Data Source=$(oracleServiceTns);Wallet_Location=$(oracleWalletDir);Tns_Admin=$(oracleWalletDir);"
+                API_URL="https://$(webappApi).azurewebsites.net"
+
+                az webapp config appsettings set --name "$(webappJava)" --resource-group "${RG}" --settings \
+                  APPLICATIONINSIGHTS_CONNECTION_STRING="${AI_CS}" \
+                  ApplicationInsightsAgent_EXTENSION_VERSION=~3 \
+                  SPRING_PROFILES_ACTIVE=autonomus \
+                  SPRING_DATASOURCE_URL="$(oracleJdbcUrl)" \
+                  SPRING_DATASOURCE_USERNAME="$(oracleUser)" \
+                  SPRING_DATASOURCE_PASSWORD="${ORACLE_PASS}" \
+                  SPRING_RABBITMQ_HOST="${RABBIT_FQDN}" \
+                  SPRING_RABBITMQ_PORT=5672 \
+                  SPRING_RABBITMQ_USERNAME=admin \
+                  SPRING_RABBITMQ_PASSWORD=admin \
+                  SPRING_RABBITMQ_VIRTUAL_HOST=email \
+                  WEBSITES_PORT=8080 --output none
+
+                az webapp config appsettings set --name "$(webappApi)" --resource-group "${RG}" --settings \
+                  APPLICATIONINSIGHTS_CONNECTION_STRING="${AI_CS}" \
+                  ApplicationInsightsAgent_EXTENSION_VERSION=~3 \
+                  "ConnectionStrings__OracleDb=${DOTNET_CONN}" \
+                  "Jwt__Key=${JWT_KEY}" Jwt__Issuer=SolarMetrics Jwt__Audience=SolarMetrics \
+                  ASPNETCORE_ENVIRONMENT=Staging --output none
+
+                az webapp config appsettings set --name "$(webappWeb)" --resource-group "${RG}" --settings \
+                  APPLICATIONINSIGHTS_CONNECTION_STRING="${AI_CS}" \
+                  ApplicationInsightsAgent_EXTENSION_VERSION=~3 \
+                  "Api__BaseUrl=${API_URL}" \
+                  "ConnectionStrings__OracleDb=${DOTNET_CONN}" \
+                  "Jwt__Key=${JWT_KEY}" Jwt__Issuer=SolarMetrics Jwt__Audience=SolarMetrics \
+                  Jwt__ExpirationMinutes=120 ASPNETCORE_ENVIRONMENT=Production --output none
+
+                for APP in "$(webappJava)" "$(webappApi)" "$(webappWeb)"; do
+                  az monitor app-insights component connect-webapp \
+                    --app "$(appInsightsName)" --web-app "${APP}" --resource-group "${RG}" --output none 2>/dev/null || true
+                done
+                echo "##vso[task.setvariable variable=rabbitFqdn;isOutput=true]${RABBIT_FQDN}"
+                echo "Infraestrutura pronta."
+
+  - stage: BuildApp
+    displayName: Build e empacotamento (CI)
+    dependsOn: criarInfra
+    jobs:
+      - job: buildStack
+        displayName: Wallet, .NET API/Web e Java
+        steps:
+          - task: Bash@3
+            displayName: Preparar wallet Oracle
+            inputs:
+              targetType: inline
+              script: |
+                set -euo pipefail
+                WORK="$(Pipeline.Workspace)/build-work"
+                mkdir -p "${WORK}"
+                if [[ -z "${WALLET_URL:-}" ]]; then
+                  echo "ERRO: defina WALLET_URL (secret) nas Variables da pipeline." >&2
+                  exit 1
+                fi
+                curl -fsSL "${WALLET_URL}" -o "${WORK}/oracle-wallet.zip"
+                unzip -q -o "${WORK}/oracle-wallet.zip" -d "${WORK}/wallet-unpack"
+                TNS="$(find "${WORK}/wallet-unpack" -name tnsnames.ora -type f | head -1)"
+                [[ -n "${TNS}" ]] || { echo "tnsnames.ora não encontrado"; exit 1; }
+                mkdir -p "${WORK}/wallet-flat"
+                cp -r "$(dirname "${TNS}")"/* "${WORK}/wallet-flat/"
+                echo "##vso[task.setvariable variable=buildWorkDir]${WORK}"
+
+          - task: UseDotNet@2
+            displayName: Instalar .NET SDK 8
+            inputs:
+              packageType: sdk
+              version: 8.x
+
+          - task: Bash@3
+            displayName: Build e zip API .NET
+            inputs:
+              targetType: inline
+              script: |
+                set -euo pipefail
+                WORK="$(buildWorkDir)"
+                git_url_to_tarball() {
+                  local u="${1%.git}"
+                  echo "${u}/archive/refs/heads/${2}.tar.gz"
+                }
+                download_repo() {
+                  local url="$1" branch="$2" dest="$3"
+                  local tgz="${WORK}/dl-${dest}.tar.gz"
+                  curl -fsSL "$(git_url_to_tarball "${url}" "${branch}")" -o "${tgz}"
+                  tar -xzf "${tgz}" -C "${WORK}"
+                  local base; base=$(basename "${url%.git}")
+                  local extracted="${WORK}/${base}-${branch}"
+                  [[ -d "${extracted}" ]] || extracted=$(find "${WORK}" -maxdepth 1 -type d -name "${base}-*" | head -1)
+                  rm -rf "${WORK}/${dest}"
+                  mv "${extracted}" "${WORK}/${dest}"
+                }
+                download_repo "$(gitUrlDotnet)" "$(gitBranch)" dotnet-src
+                PUB="${WORK}/dotnet-api-publish"
+                rm -rf "${PUB}"
+                dotnet publish "${WORK}/dotnet-src/SolarMetrics.API/SolarMetrics.API.csproj" -c Release -o "${PUB}"
+                mkdir -p "${PUB}/wallet"
+                cp -r "${WORK}/wallet-flat/"* "${PUB}/wallet/"
+                ZIP="${WORK}/dotnet-api.zip"
+                rm -f "${ZIP}"
+                ( cd "${PUB}" && zip -q -r "${ZIP}" . )
+                echo "##vso[task.setvariable variable=dotnetApiZip]${ZIP}"
+
+          - task: PublishPipelineArtifact@1
+            displayName: Publicar artefato API .NET
+            inputs:
+              targetPath: $(dotnetApiZip)
+              artifact: $(artifactApi)
+              publishLocation: pipeline
+
+          - task: Bash@3
+            displayName: Build e zip MVC .NET
+            inputs:
+              targetType: inline
+              script: |
+                set -euo pipefail
+                WORK="$(buildWorkDir)"
+                PUB="${WORK}/dotnet-web-publish"
+                rm -rf "${PUB}"
+                dotnet publish "${WORK}/dotnet-src/SolarMetrics.Web/SolarMetrics.Web.csproj" -c Release -o "${PUB}"
+                mkdir -p "${PUB}/wallet"
+                cp -r "${WORK}/wallet-flat/"* "${PUB}/wallet/"
+                ZIP="${WORK}/dotnet-web.zip"
+                rm -f "${ZIP}"
+                ( cd "${PUB}" && zip -q -r "${ZIP}" . )
+                echo "##vso[task.setvariable variable=dotnetWebZip]${ZIP}"
+
+          - task: PublishPipelineArtifact@1
+            displayName: Publicar artefato MVC .NET
+            inputs:
+              targetPath: $(dotnetWebZip)
+              artifact: $(artifactWeb)
+              publishLocation: pipeline
+
+          - task: Bash@3
+            displayName: Build e zip Java (melhor esforço)
+            continueOnError: true
+            inputs:
+              targetType: inline
+              script: |
+                set -euo pipefail
+                WORK="$(buildWorkDir)"
+                git_url_to_tarball() {
+                  local u="${1%.git}"
+                  echo "${u}/archive/refs/heads/${2}.tar.gz"
+                }
+                download_repo() {
+                  local url="$1" branch="$2" dest="$3"
+                  local tgz="${WORK}/dl-${dest}.tar.gz"
+                  curl -fsSL "$(git_url_to_tarball "${url}" "${branch}")" -o "${tgz}"
+                  tar -xzf "${tgz}" -C "${WORK}"
+                  local base; base=$(basename "${url%.git}")
+                  local extracted="${WORK}/${base}-${branch}"
+                  [[ -d "${extracted}" ]] || extracted=$(find "${WORK}" -maxdepth 1 -type d -name "${base}-*" | head -1)
+                  rm -rf "${WORK}/${dest}"
+                  mv "${extracted}" "${WORK}/${dest}"
+                }
+                download_repo "$(gitUrlJava)" "$(gitBranch)" java-src
+                ( cd "${WORK}/java-src" && mvn -q -DskipTests package )
+                JAR="$(find "${WORK}/java-src/target" -maxdepth 1 -name '*.jar' ! -name '*-sources.jar' ! -name '*-javadoc.jar' | head -1)"
+                [[ -f "${JAR}" ]] || { echo "JAR não encontrado"; exit 1; }
+                STAGE="${WORK}/java-stage"
+                rm -rf "${STAGE}"
+                mkdir -p "${STAGE}/wallet"
+                cp "${JAR}" "${STAGE}/app.jar"
+                cp -r "${WORK}/wallet-flat/"* "${STAGE}/wallet/"
+                ZIP="${WORK}/java-deploy.zip"
+                rm -f "${ZIP}"
+                ( cd "${STAGE}" && zip -q -r "${ZIP}" . )
+                echo "##vso[task.setvariable variable=javaZip]${ZIP}"
+                echo "##vso[task.setvariable variable=publishJava]true"
+
+          - task: PublishPipelineArtifact@1
+            displayName: Publicar artefato Java
+            condition: eq(variables['publishJava'], 'true')
+            inputs:
+              targetPath: $(buildWorkDir)/java-deploy.zip
+              artifact: $(artifactJava)
+              publishLocation: pipeline
+
+  - stage: DeployApp
+    displayName: Deploy nas Web Apps (CD)
+    dependsOn: BuildApp
+    jobs:
+      - job: deployWebApps
+        displayName: Zip deploy API, Web e Java
+        steps:
+          - task: DownloadPipelineArtifact@2
+            displayName: Baixar artefato API .NET
+            inputs:
+              artifact: $(artifactApi)
+              path: $(Pipeline.Workspace)/deploy
+
+          - task: DownloadPipelineArtifact@2
+            displayName: Baixar artefato MVC .NET
+            inputs:
+              artifact: $(artifactWeb)
+              path: $(Pipeline.Workspace)/deploy
+
+          - task: DownloadPipelineArtifact@2
+            displayName: Baixar artefato Java
+            continueOnError: true
+            inputs:
+              artifact: $(artifactJava)
+              path: $(Pipeline.Workspace)/deploy
+
+          - task: AzureCLI@2
+            displayName: Deploy API .NET
+            inputs:
+              azureSubscription: $(azureServiceConnection)
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                set -euo pipefail
+                RG="$(resourceGroup)"
+                SUB="$(azureSubscription)"
+                [[ -z "${SUB}" ]] || az account set --subscription "${SUB}"
+                ZIP="$(find "$(Pipeline.Workspace)/deploy/$(artifactApi)" -name '*.zip' | head -1)"
+                [[ -f "${ZIP}" ]] || { echo "ZIP API não encontrado"; exit 1; }
+                deploy_with_fallback() {
+                  local app="$1" z="$2"
+                  if ! az webapp deploy -g "${RG}" -n "${app}" --src-path "${z}" --type zip --clean true --timeout 600000; then
+                    echo "Fallback Kudu zipdeploy para ${app}"
+                    KU=$(az webapp deployment list-publishing-profiles -g "${RG}" -n "${app}" \
+                      --query "[?contains(publishUrl,'scm.azurewebsites.net')].userName | [0]" -o tsv)
+                    KP=$(az webapp deployment list-publishing-profiles -g "${RG}" -n "${app}" \
+                      --query "[?contains(publishUrl,'scm.azurewebsites.net')].userPWD | [0]" -o tsv)
+                    curl -fsS -X POST -u "${KU}:${KP}" -H "Content-Type: application/octet-stream" \
+                      --data-binary "@${z}" "https://${app}.scm.azurewebsites.net/api/zipdeploy?isAsync=false"
+                  fi
+                }
+                deploy_with_fallback "$(webappApi)" "${ZIP}"
+
+          - task: AzureCLI@2
+            displayName: Deploy MVC .NET
+            inputs:
+              azureSubscription: $(azureServiceConnection)
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                set -euo pipefail
+                RG="$(resourceGroup)"
+                SUB="$(azureSubscription)"
+                [[ -z "${SUB}" ]] || az account set --subscription "${SUB}"
+                ZIP="$(find "$(Pipeline.Workspace)/deploy/$(artifactWeb)" -name '*.zip' | head -1)"
+                [[ -f "${ZIP}" ]] || { echo "ZIP Web não encontrado"; exit 1; }
+                if ! az webapp deploy -g "${RG}" -n "$(webappWeb)" --src-path "${ZIP}" --type zip --clean true --timeout 600000; then
+                  KU=$(az webapp deployment list-publishing-profiles -g "${RG}" -n "$(webappWeb)" \
+                    --query "[?contains(publishUrl,'scm.azurewebsites.net')].userName | [0]" -o tsv)
+                  KP=$(az webapp deployment list-publishing-profiles -g "${RG}" -n "$(webappWeb)" \
+                    --query "[?contains(publishUrl,'scm.azurewebsites.net')].userPWD | [0]" -o tsv)
+                  curl -fsS -X POST -u "${KU}:${KP}" -H "Content-Type: application/octet-stream" \
+                    --data-binary "@${ZIP}" "https://$(webappWeb).scm.azurewebsites.net/api/zipdeploy?isAsync=false"
+                fi
+
+          - task: AzureCLI@2
+            displayName: Deploy Java
+            continueOnError: true
+            inputs:
+              azureSubscription: $(azureServiceConnection)
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                set -euo pipefail
+                RG="$(resourceGroup)"
+                SUB="$(azureSubscription)"
+                [[ -z "${SUB}" ]] || az account set --subscription "${SUB}"
+                ZIP="$(find "$(Pipeline.Workspace)/deploy/$(artifactJava)" -name '*.zip' 2>/dev/null | head -1)"
+                if [[ ! -f "${ZIP}" ]]; then
+                  echo "Artefato Java ausente — deploy Java ignorado."
+                  exit 0
+                fi
+                az webapp deploy -g "${RG}" -n "$(webappJava)" --src-path "${ZIP}" --type zip --timeout 600000 \
+                  || echo "AVISO: deploy Java falhou."
+
+          - task: AzureCLI@2
+            displayName: Reiniciar Web Apps e exibir URLs
+            inputs:
+              azureSubscription: $(azureServiceConnection)
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                set -euo pipefail
+                RG="$(resourceGroup)"
+                for APP in "$(webappJava)" "$(webappApi)" "$(webappWeb)"; do
+                  az webapp restart -g "${RG}" -n "${APP}" --output none
+                done
+                echo "============================================"
+                echo " Java:     https://$(webappJava).azurewebsites.net"
+                echo " API .NET: https://$(webappApi).azurewebsites.net"
+                echo " Web MVC:  https://$(webappWeb).azurewebsites.net"
+                echo " Swagger:  https://$(webappApi).azurewebsites.net/swagger"
+                echo "============================================"

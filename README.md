@@ -2,7 +2,7 @@
 
 # SolarMetrics — DevOps e deploy na Microsoft Azure
 
-Este repositório concentra o **script de infraestrutura e deploy**, **DDL de referência**, **documentação de arquitetura** e **amostras HTTP** para o ecossistema SolarMetrics. **O fluxo oficial é apenas o script Bash** [`deploy-azure-solarmetrics.sh`](deploy-azure-solarmetrics.sh).
+Este repositório concentra o **script de infraestrutura e deploy**, a **pipeline CI/CD Azure DevOps** (YAML único), **DDL de referência**, **documentação de arquitetura** e **amostras HTTP** para o ecossistema SolarMetrics.
 
 Video Demonstração: https://vimeo.com/1182450375
 
@@ -35,6 +35,43 @@ chmod +x deploy-azure-solarmetrics.sh
 ```
 
 Modo recomendado na nuvem: **Azure Cloud Shell** (Bash) + `WALLET_URL` apontando para o zip do wallet (HTTPS).
+
+## Pipeline Azure DevOps (CI/CD — arquivo único)
+
+| Recurso | Descrição |
+|--------|-----------|
+| [`azure-pipelines.yml`](azure-pipelines.yml) | Pipeline única com 3 stages: `criarInfra` → `BuildApp` → `DeployApp` (stack Java + .NET API + MVC + RabbitMQ + Oracle). |
+| [`docs/PIPELINE-CI-CD.md`](docs/PIPELINE-CI-CD.md) | Desenho da pipeline, dissertação de cada etapa e roteiro de testes (entrega challenge). |
+| [`step-by-step-cloud/step-by-step-pipeline/STEP-BY-STEP-PIPELINE-2026-05-22.md`](step-by-step-cloud/step-by-step-pipeline/STEP-BY-STEP-PIPELINE-2026-05-22.md) | Passo a passo no portal Azure DevOps (GitHub ou Azure Repos). |
+
+### Pré-requisitos
+
+1. Organização/projeto Azure DevOps (ex.: `Challenge-SolarMetrics` / `SolarMetrics`).
+2. **Service connection** Azure Resource Manager — nome padrão no YAML: `MyAzureSubscription` (assinatura *Azure for Students* ou a sua).
+3. **Variables** na pipeline (marque como secret onde indicado):
+
+| Variável | Secret | Descrição |
+|----------|--------|-----------|
+| `WALLET_URL` | Sim | HTTPS do `Wallet_*.zip` (Blob SAS ou link temporário). **Não** commitar o zip. |
+| `ORACLE_PASSWORD` | Sim | Senha do usuário Oracle (`ADMIN`). |
+| `JWT_KEY` | Opcional | Chave JWT; se vazio, usa o padrão acadêmico do script. |
+
+4. (Opcional) Ajuste `webappApi`, `webappJava`, `webappWeb` no YAML ou em Variables se os nomes globais já estiverem ocupados na Azure (sufixo RM).
+
+### Como criar e executar a pipeline
+
+1. **Pipelines** → **Create Pipeline** → escolha **GitHub** ou **Azure Repos** (ver step-by-step).
+2. Selecione este repositório e o arquivo **`/azure-pipelines.yml`** na branch `main`.
+3. **Save and run** — na primeira execução, confirme as variables secretas.
+4. Aguarde os três stages em verde; use as URLs impressas no log do stage **DeployApp**.
+
+### Testar CRUD após a pipeline
+
+1. Swagger: `https://<webappApi>.azurewebsites.net/swagger`
+2. `POST /Cliente` com JSON em [`http/crud-samples/dotnet-post-cliente.json`](http/crud-samples/dotnet-post-cliente.json)
+3. Oracle: `SELECT * FROM SM_USUARIO;` — relacionamento com `SM_SISTEMA` via `CLIENTE_ID` (ver [SolarMetrics-BancoDados](https://github.com/bmvck/SolarMetrics-BancoDados))
+
+Alternativa sem DevOps: o script [`deploy-azure-solarmetrics.sh`](deploy-azure-solarmetrics.sh) executa o mesmo fluxo manualmente.
 
 ## Repositórios do ecossistema
 
