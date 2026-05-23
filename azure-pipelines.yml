@@ -288,20 +288,20 @@ stages:
             displayName: Baixar artefato API .NET
             inputs:
               artifact: $(artifactApi)
-              path: $(Pipeline.Workspace)/deploy
+              path: $(Pipeline.Workspace)/deploy/$(artifactApi)
 
           - task: DownloadPipelineArtifact@2
             displayName: Baixar artefato MVC .NET
             inputs:
               artifact: $(artifactWeb)
-              path: $(Pipeline.Workspace)/deploy
+              path: $(Pipeline.Workspace)/deploy/$(artifactWeb)
 
           - task: DownloadPipelineArtifact@2
             displayName: Baixar artefato Java
             continueOnError: true
             inputs:
               artifact: $(artifactJava)
-              path: $(Pipeline.Workspace)/deploy
+              path: $(Pipeline.Workspace)/deploy/$(artifactJava)
 
           - task: AzureCLI@2
             displayName: Deploy API .NET
@@ -314,8 +314,10 @@ stages:
                 RG="$(resourceGroup)"
                 SUB="$(azureSubscription)"
                 [[ -z "${SUB}" ]] || az account set --subscription "${SUB}"
-                ZIP="$(find "$(Pipeline.Workspace)/deploy/$(artifactApi)" -name '*.zip' | head -1)"
-                [[ -f "${ZIP}" ]] || { echo "ZIP API não encontrado"; exit 1; }
+                DEPLOY_DIR="$(Pipeline.Workspace)/deploy/$(artifactApi)"
+                ZIP="$(find "${DEPLOY_DIR}" -maxdepth 3 -name 'dotnet-api.zip' -type f 2>/dev/null | head -1)"
+                [[ -z "${ZIP}" ]] && ZIP="$(find "${DEPLOY_DIR}" -maxdepth 3 -name '*.zip' -type f 2>/dev/null | head -1)"
+                [[ -f "${ZIP}" ]] || { echo "ZIP API não encontrado em ${DEPLOY_DIR}"; ls -laR "${DEPLOY_DIR}" 2>/dev/null || true; exit 1; }
                 deploy_with_fallback() {
                   local app="$1" z="$2"
                   if ! az webapp deploy -g "${RG}" -n "${app}" --src-path "${z}" --type zip --clean true --timeout 600000; then
@@ -341,8 +343,10 @@ stages:
                 RG="$(resourceGroup)"
                 SUB="$(azureSubscription)"
                 [[ -z "${SUB}" ]] || az account set --subscription "${SUB}"
-                ZIP="$(find "$(Pipeline.Workspace)/deploy/$(artifactWeb)" -name '*.zip' | head -1)"
-                [[ -f "${ZIP}" ]] || { echo "ZIP Web não encontrado"; exit 1; }
+                DEPLOY_DIR="$(Pipeline.Workspace)/deploy/$(artifactWeb)"
+                ZIP="$(find "${DEPLOY_DIR}" -maxdepth 3 -name 'dotnet-web.zip' -type f 2>/dev/null | head -1)"
+                [[ -z "${ZIP}" ]] && ZIP="$(find "${DEPLOY_DIR}" -maxdepth 3 -name '*.zip' -type f 2>/dev/null | head -1)"
+                [[ -f "${ZIP}" ]] || { echo "ZIP Web não encontrado em ${DEPLOY_DIR}"; ls -laR "${DEPLOY_DIR}" 2>/dev/null || true; exit 1; }
                 if ! az webapp deploy -g "${RG}" -n "$(webappWeb)" --src-path "${ZIP}" --type zip --clean true --timeout 600000; then
                   KU=$(az webapp deployment list-publishing-profiles -g "${RG}" -n "$(webappWeb)" \
                     --query "[?contains(publishUrl,'scm.azurewebsites.net')].userName | [0]" -o tsv)
@@ -364,7 +368,9 @@ stages:
                 RG="$(resourceGroup)"
                 SUB="$(azureSubscription)"
                 [[ -z "${SUB}" ]] || az account set --subscription "${SUB}"
-                ZIP="$(find "$(Pipeline.Workspace)/deploy/$(artifactJava)" -name '*.zip' 2>/dev/null | head -1)"
+                DEPLOY_DIR="$(Pipeline.Workspace)/deploy/$(artifactJava)"
+                ZIP="$(find "${DEPLOY_DIR}" -maxdepth 3 -name 'java-deploy.zip' -type f 2>/dev/null | head -1)"
+                [[ -z "${ZIP}" ]] && ZIP="$(find "${DEPLOY_DIR}" -maxdepth 3 -name '*.zip' -type f 2>/dev/null | head -1)"
                 if [[ ! -f "${ZIP}" ]]; then
                   echo "Artefato Java ausente — deploy Java ignorado."
                   exit 0
