@@ -2,7 +2,7 @@
 
 ## Descrição da solução (resumo)
 
-O **SolarMetrics** monitora sistemas de energia solar. A pipeline automatiza o provisionamento na **Microsoft Azure**, o build das aplicações (**Java Spring Boot**, **API .NET 8** e **MVC .NET**) e o deploy com **wallet Oracle** para o **Oracle Autonomous Database** (ATP). Um **RabbitMQ** em **Azure Container Instances** integra a API Java. O arquivo único [`azure-pipelines.yml`](../azure-pipelines.yml) concentra CI e CD, no mesmo espírito do script [`deploy-azure-solarmetrics.sh`](../deploy-azure-solarmetrics.sh).
+O **SolarMetrics** monitora sistemas de energia solar. A pipeline automatiza o provisionamento na **Microsoft Azure**, o build das aplicações (**Java Spring Boot**, **API .NET 8** e **MVC .NET**) e o deploy com **wallet Oracle** para o **Oracle Autonomous Database** (ATP). Um **RabbitMQ** e um **MongoDB 7** em **Azure Container Instances** integram, respetivamente, a API Java (filas) e as apps .NET (histórico do chatbot). O arquivo único [`azure-pipelines.yml`](../azure-pipelines.yml) concentra CI e CD, no mesmo espírito do script [`deploy-azure-solarmetrics.sh`](../deploy-azure-solarmetrics.sh).
 
 Repositórios de aplicação (baixados na pipeline via tarball GitHub):
 
@@ -23,7 +23,8 @@ flowchart TB
     infra[AzureCLI_provisionar]
     infra --> rg[RG_Insights_Plano]
     rg --> rmq[RabbitMQ_ACI]
-    rmq --> wa[3_WebApps_AppSettings]
+    rmq --> mongo[MongoDB_ACI]
+    mongo --> wa[3_WebApps_AppSettings]
   end
   subgraph stage2 [Stage_BuildApp_CI]
     wal[Download_wallet_WALLET_URL]
@@ -64,8 +65,9 @@ flowchart TB
 | **Application Insights** | Telemetria das três Web Apps. |
 | **App Service Plan** | Linux **B1** — hospeda Java 17 e .NET 8 no mesmo plano. |
 | **RabbitMQ (ACI)** | Container `rabbitmq:3-management` com DNS `solarmetrics-rmq` para filas AMQP da API Java. |
+| **MongoDB (ACI)** | Container `mongo:7` com DNS `solarmetrics-mongo`; connection string em `MongoDb__ConnectionString` (API + MVC). |
 | **Web Apps** | `solarmetrics-java`, `solarmetrics-api`, `solarmetrics-web` com runtimes adequados. |
-| **App Settings** | JDBC/ODP Oracle, credenciais Rabbit, connection string do Insights; API .NET em **Staging** para habilitar `POST /auth/token` (login do MVC). |
+| **App Settings** | JDBC/ODP Oracle, credenciais Rabbit, MongoDB (`MongoDb__Enabled=true`), Insights; API .NET em **Staging** para `POST /auth/token`. |
 
 Este stage é **CD de infraestrutura**: garante que o destino do deploy existe e está configurado antes do build.
 
@@ -97,6 +99,7 @@ Este stage é **CD da aplicação**: leva os binários produzidos no CI até o A
 |------|----------------|-----|
 | `WALLET_URL` | Pipeline → Variables (**secret**) | HTTPS do `Wallet_*.zip` Oracle |
 | `ORACLE_PASSWORD` | Variables (**secret**) | Senha ADMIN ATP |
+| `MONGO_PASSWORD` | Variables (opcional, secret) | Senha root Mongo ACI; padrão `SolarMetricsMongo1` |
 | `JWT_KEY` | Variables (opcional, secret) | JWT da API .NET / MVC |
 | `webappApi`, `webappJava`, … | `azure-pipelines.yml` ou Variables | Sufixo RM se nomes globais estiverem ocupados |
 | `azureServiceConnection` | YAML | Nome da service connection (padrão `MyAzureSubscription`) |
@@ -106,6 +109,7 @@ Este stage é **CD da aplicação**: leva os binários produzidos no CI até o A
 1. Abrir `https://<webappApi>.azurewebsites.net/swagger`.
 2. `POST /Cliente` com [`http/crud-samples/dotnet-post-cliente.json`](../http/crud-samples/dotnet-post-cliente.json).
 3. No Oracle: `SELECT * FROM SM_USUARIO;` e `SELECT * FROM SM_SISTEMA;` (relacionamento **Cliente → Sistema**).
+4. MongoDB: MVC **Histórico IA** após pergunta no assistente; `GET /ChatbotInteracoes` na API → 200.
 
 ## Relação com o script manual
 

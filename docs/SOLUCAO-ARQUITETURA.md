@@ -3,7 +3,7 @@
 
 ## Descrição da solução
 
-A solução **SolarMetrics** monitora sistemas de energia solar. Nesta entrega em nuvem, a **API Java (Spring Boot)**, a **API .NET 8** e a aplicação web **MVC (SolarMetrics.Web)** são implantadas em **Azure App Service (Linux)** no mesmo plano, conectando-se ao **Oracle Autonomous Database** (ATP) na Oracle Cloud usando **wallet TLS**. O painel MVC consome a API .NET (REST e JWT). Um **RabbitMQ** em **Azure Container Instances** atende à integração assíncrona (e-mail/filas) prevista na API Java. O **Application Insights** coleta telemetria das aplicações.
+A solução **SolarMetrics** monitora sistemas de energia solar. Nesta entrega em nuvem, a **API Java (Spring Boot)**, a **API .NET 8** e a aplicação web **MVC (SolarMetrics.Web)** são implantadas em **Azure App Service (Linux)** no mesmo plano, conectando-se ao **Oracle Autonomous Database** (ATP) na Oracle Cloud usando **wallet TLS**. O painel MVC consome a API .NET (REST e JWT). Um **RabbitMQ** em **Azure Container Instances** atende à integração assíncrona (e-mail/filas) prevista na API Java. Um **MongoDB 7** em **ACI** (`solarmetrics-mongo`) persiste o histórico do assistente IA nas apps .NET. O **Application Insights** coleta telemetria das aplicações.
 
 Repositórios vinculados ao deploy:
 
@@ -28,6 +28,7 @@ flowchart TB
       WaW[WebApp_MVC_SolarMetrics_Web]
     end
     Aci[RabbitMQ_ACI]
+    MongoAci[MongoDB_ACI]
     Ai[Application_Insights]
   end
   subgraph oci [Oracle Cloud]
@@ -42,6 +43,8 @@ flowchart TB
   WaN -->|ODP_NET_wallet| Atp
   WaW -->|ODP_NET_wallet| Atp
   WaJ -->|AMQP_5672| Aci
+  WaN -->|MongoDB_27017| MongoAci
+  WaW -->|MongoDB_27017| MongoAci
   WaJ -. telemetria .-> Ai
   WaN -. telemetria .-> Ai
   WaW -. telemetria .-> Ai
@@ -52,7 +55,8 @@ Fluxo da informação (resumo):
 1. Utilizadores acedem às APIs e ao painel **MVC** pelos Web Apps (HTTPS).
 2. As APIs e a aplicação MVC persistem e consultam dados no **Oracle ATP** (ex.: entidades com relacionamento **Cliente → Sistema** mapeadas em `SM_USUARIO` / `SM_SISTEMA`).
 3. A API Java publica/consome mensagens no **RabbitMQ** quando os fluxos de domínio exigem processamento assíncrono.
-4. Métricas e logs são enviados ao **Application Insights** para observabilidade.
+4. As apps .NET gravam interações do chatbot no **MongoDB ACI** (coleção `chatbot_interactions`).
+5. Métricas e logs são enviados ao **Application Insights** para observabilidade.
 
 ## Benefícios ao negócio
 

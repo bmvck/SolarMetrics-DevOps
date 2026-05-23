@@ -13,7 +13,7 @@ https://solarmetrics-web.azurewebsites.net/
 
 | Recurso | Descrição |
 |--------|-----------|
-| [`deploy-azure-solarmetrics.sh`](deploy-azure-solarmetrics.sh) | Cria resource group, Application Insights, App Service Plan (Linux **B1**), **três Web Apps**, **RabbitMQ em ACI**, faz download do código (**tarball** GitHub ou `git clone`), build (`dotnet` / `mvn`) e **`az webapp deploy`** com **wallet Oracle** (`WALLET_URL` ou ficheiro local). |
+| [`deploy-azure-solarmetrics.sh`](deploy-azure-solarmetrics.sh) | Cria resource group, Application Insights, App Service Plan (Linux **B1**), **três Web Apps**, **RabbitMQ** e **MongoDB em ACI**, faz download do código (**tarball** GitHub ou `git clone`), build (`dotnet` / `mvn`) e **`az webapp deploy`** com **wallet Oracle** (`WALLET_URL` ou ficheiro local). |
 | [`ddl/01_DDL_SolarMetrics.txt`](ddl/01_DDL_SolarMetrics.txt) | DDL texto para o Oracle (entrega). |
 | [`docs/SOLUCAO-ARQUITETURA.md`](docs/SOLUCAO-ARQUITETURA.md) | Descrição da solução, diagrama e benefícios. |
 | [`http/crud-samples/`](http/crud-samples/) | Exemplos JSON para testar APIs. |
@@ -25,6 +25,7 @@ https://solarmetrics-web.azurewebsites.net/
 - **Web App .NET 8** — painel **MVC** (`SolarMetrics.Web` no mesmo repositório .NET).
 - **Oracle Autonomous Database** — conexão via **wallet** nos pacotes de deploy.
 - **RabbitMQ** — contentor em **Azure Container Instances** (integração com a API Java).
+- **MongoDB 7** — contentor em **ACI** (`solarmetrics-mongo`) — histórico do chatbot (API .NET + MVC).
 - **Application Insights** — telemetria ligada aos Web Apps.
 
 ### Autenticação do painel MVC (login)
@@ -42,7 +43,7 @@ Modo recomendado na nuvem: **Azure Cloud Shell** (Bash) + `WALLET_URL` apontando
 
 | Recurso | Descrição |
 |--------|-----------|
-| [`azure-pipelines.yml`](azure-pipelines.yml) | Pipeline única com 3 stages: `criarInfra` → `BuildApp` → `DeployApp` (stack Java + .NET API + MVC + RabbitMQ + Oracle). |
+| [`azure-pipelines.yml`](azure-pipelines.yml) | Pipeline única com 3 stages: `criarInfra` → `BuildApp` → `DeployApp` (stack Java + .NET API + MVC + RabbitMQ + MongoDB + Oracle). |
 | [`docs/PIPELINE-CI-CD.md`](docs/PIPELINE-CI-CD.md) | Desenho da pipeline, dissertação de cada etapa e roteiro de testes (entrega challenge). |
 | [`step-by-step-cloud/step-by-step-pipeline/STEP-BY-STEP-PIPELINE-2026-05-22.md`](step-by-step-cloud/step-by-step-pipeline/STEP-BY-STEP-PIPELINE-2026-05-22.md) | Passo a passo no portal Azure DevOps (GitHub ou Azure Repos). |
 
@@ -56,6 +57,7 @@ Modo recomendado na nuvem: **Azure Cloud Shell** (Bash) + `WALLET_URL` apontando
 |----------|--------|-----------|
 | `WALLET_URL` | Sim | HTTPS do `Wallet_*.zip` (Blob SAS ou link temporário). **Não** commitar o zip. |
 | `ORACLE_PASSWORD` | Sim | Senha do usuário Oracle (`ADMIN`). |
+| `MONGO_PASSWORD` | Opcional | Senha root do MongoDB ACI; padrão `SolarMetricsMongo1` no YAML/script. |
 | `JWT_KEY` | Opcional | Chave JWT; se vazio, usa o padrão acadêmico do script. |
 
 4. (Opcional) Ajuste `webappApi`, `webappJava`, `webappWeb` no YAML ou em Variables se os nomes globais já estiverem ocupados na Azure (sufixo RM).
@@ -72,6 +74,13 @@ Modo recomendado na nuvem: **Azure Cloud Shell** (Bash) + `WALLET_URL` apontando
 1. Swagger: `https://<webappApi>.azurewebsites.net/swagger`
 2. `POST /Cliente` com JSON em [`http/crud-samples/dotnet-post-cliente.json`](http/crud-samples/dotnet-post-cliente.json)
 3. Oracle: `SELECT * FROM SM_USUARIO;` — relacionamento com `SM_SISTEMA` via `CLIENTE_ID` (ver [SolarMetrics-BancoDados](https://github.com/bmvck/SolarMetrics-BancoDados))
+
+### Testar MongoDB (chatbot) na nuvem
+
+1. **Rerun** do stage `criarInfra` (ou `./deploy-azure-solarmetrics.sh`) para criar o ACI Mongo e aplicar `MongoDb__*` nos Web Apps .NET.
+2. **Restart** `solarmetrics-api` e `solarmetrics-web` (ou pipeline completa).
+3. MVC: **Assistente IA** → enviar pergunta → **Histórico IA** deve listar a interação.
+4. API: `GET https://<webappApi>.azurewebsites.net/ChatbotInteracoes` → **200** (não 503).
 
 Alternativa sem DevOps: o script [`deploy-azure-solarmetrics.sh`](deploy-azure-solarmetrics.sh) executa o mesmo fluxo manualmente.
 
@@ -107,6 +116,7 @@ flowchart TB
       subgraph suporte [Servicos_auxiliares_RG]
         direction TB
         rmq[RabbitMQ ACI]
+        mongo[MongoDB ACI]
         ins[Application Insights]
       end
     end
@@ -124,6 +134,8 @@ flowchart TB
   wa -->|ODP wallet| atp
   wj -->|JDBC TCPS wallet| atp
   wj -->|AMQP 5672| rmq
+  wa -->|MongoDB 27017| mongo
+  ww -->|MongoDB 27017| mongo
   wj -.->|telemetria| ins
   wa -.->|telemetria| ins
   ww -.->|telemetria| ins
@@ -145,6 +157,7 @@ flowchart TB
 | `WEBAPP_JAVA_NAME` / `WEBAPP_DOTNET_NAME` / `WEBAPP_WEB_NAME` | Nomes dos Web Apps (predefinidos: `solarmetrics-java`, `solarmetrics-api`, `solarmetrics-web`). |
 | `GIT_URL_JAVA` / `GIT_URL_DOTNET` | URLs `.git` para tarball. |
 | `USE_GIT_CLONE` | `1` usa `git clone`; `0` (padrão) usa tarball. |
+| `MONGO_PASSWORD` / `MONGO_DNS_LABEL` | Senha e DNS do MongoDB ACI (padrões: `SolarMetricsMongo1`, `solarmetrics-mongo`). |
 
 
 

@@ -31,6 +31,13 @@ export WEBAPP_WEB_NAME="${WEBAPP_WEB_NAME:-solarmetrics-web}"
 export RABBITMQ_CONTAINER_NAME="${RABBITMQ_CONTAINER_NAME:-aci-solarmetrics-rabbitmq}"
 export RABBITMQ_DNS_LABEL="${RABBITMQ_DNS_LABEL:-solarmetrics-rmq}"
 
+export MONGO_CONTAINER_NAME="${MONGO_CONTAINER_NAME:-aci-solarmetrics-mongodb}"
+export MONGO_DNS_LABEL="${MONGO_DNS_LABEL:-solarmetrics-mongo}"
+export MONGO_USER="${MONGO_USER:-admin}"
+export MONGO_PASSWORD="${MONGO_PASSWORD:-SolarMetricsMongo1}"
+export MONGO_DATABASE_NAME="${MONGO_DATABASE_NAME:-solarmetrics}"
+export MONGO_COLLECTION="${MONGO_COLLECTION:-chatbot_interactions}"
+
 # Repositórios públicos (.git — usados para montar URL do tarball GitHub)
 export GIT_URL_JAVA="${GIT_URL_JAVA:-https://github.com/ARC-ceo/SolarMetrics-JavaAdvanced.git}"
 export GIT_URL_DOTNET="${GIT_URL_DOTNET:-https://github.com/bmvck/SolarMetrics-Dotnet.git}"
@@ -64,7 +71,7 @@ if [[ -z "${ORACLE_PASSWORD}" ]]; then
   exit 1
 fi
 
-echo ">> Web Apps: ${WEBAPP_JAVA_NAME} | API ${WEBAPP_DOTNET_NAME} | Web ${WEBAPP_WEB_NAME} | Rabbit: ${RABBITMQ_DNS_LABEL}"
+echo ">> Web Apps: ${WEBAPP_JAVA_NAME} | API ${WEBAPP_DOTNET_NAME} | Web ${WEBAPP_WEB_NAME} | Rabbit: ${RABBITMQ_DNS_LABEL} | Mongo: ${MONGO_DNS_LABEL}"
 if [[ -n "${WALLET_URL}" ]]; then
   echo ">> Wallet: download via WALLET_URL (nuvem/HTTP)"
 elif [[ -n "${WALLET_ZIP}" ]]; then
@@ -170,6 +177,43 @@ fi
 echo ">> RabbitMQ: ${RABBIT_FQDN}:5672 (vhost=email)"
 
 # ---------------------------------------------------------------------------
+# MongoDB (ACI) — histórico do chatbot (.NET API + MVC)
+# ---------------------------------------------------------------------------
+if ! az container show --name "${MONGO_CONTAINER_NAME}" --resource-group "${RESOURCE_GROUP_NAME}" &>/dev/null; then
+  echo ">> Criando MongoDB (ACI) — imagem mongo:7..."
+  az container create \
+    --resource-group "${RESOURCE_GROUP_NAME}" \
+    --location "${LOCATION}" \
+    --name "${MONGO_CONTAINER_NAME}" \
+    --image mongo:7 \
+    --os-type Linux \
+    --dns-name-label "${MONGO_DNS_LABEL}" \
+    --ports 27017 \
+    --cpu 1 \
+    --memory 1.5 \
+    --environment-variables \
+      MONGO_INITDB_ROOT_USERNAME="${MONGO_USER}" \
+      MONGO_INITDB_ROOT_PASSWORD="${MONGO_PASSWORD}" \
+    --output none
+else
+  echo ">> Container MongoDB já existe: ${MONGO_CONTAINER_NAME}"
+fi
+
+MONGO_FQDN="$(
+  az container show \
+    --name "${MONGO_CONTAINER_NAME}" \
+    --resource-group "${RESOURCE_GROUP_NAME}" \
+    --query "ipAddress.fqdn" \
+    -o tsv
+)"
+if [[ -z "${MONGO_FQDN}" ]]; then
+  echo "ERRO: FQDN do MongoDB vazio." >&2
+  exit 1
+fi
+MONGO_CONN="mongodb://${MONGO_USER}:${MONGO_PASSWORD}@${MONGO_FQDN}:27017/?authSource=admin"
+echo ">> MongoDB: ${MONGO_FQDN}:27017 (db=${MONGO_DATABASE_NAME})"
+
+# ---------------------------------------------------------------------------
 # Web Apps
 # ---------------------------------------------------------------------------
 if ! az webapp show --name "${WEBAPP_JAVA_NAME}" --resource-group "${RESOURCE_GROUP_NAME}" &>/dev/null; then
@@ -258,6 +302,10 @@ az webapp config appsettings set \
     "Jwt__Issuer=SolarMetrics" \
     "Jwt__Audience=SolarMetrics" \
     ASPNETCORE_ENVIRONMENT="Staging" \
+    MongoDb__Enabled=true \
+    "MongoDb__ConnectionString=${MONGO_CONN}" \
+    MongoDb__DatabaseName="${MONGO_DATABASE_NAME}" \
+    MongoDb__ChatbotInteractionsCollection="${MONGO_COLLECTION}" \
   --output none
 
 # API em Staging: /auth/token fica ativo (em Production a API devolve 404 e o MVC não obtém JWT).
@@ -277,6 +325,10 @@ az webapp config appsettings set \
     "Jwt__Audience=SolarMetrics" \
     "Jwt__ExpirationMinutes=120" \
     ASPNETCORE_ENVIRONMENT="Production" \
+    MongoDb__Enabled=true \
+    "MongoDb__ConnectionString=${MONGO_CONN}" \
+    MongoDb__DatabaseName="${MONGO_DATABASE_NAME}" \
+    MongoDb__ChatbotInteractionsCollection="${MONGO_COLLECTION}" \
   --output none
 
 az monitor app-insights component connect-webapp \
@@ -647,4 +699,5 @@ echo " Java:      https://${WEBAPP_JAVA_NAME}.azurewebsites.net"
 echo " API .NET:  https://${WEBAPP_DOTNET_NAME}.azurewebsites.net"
 echo " Web MVC:   https://${WEBAPP_WEB_NAME}.azurewebsites.net"
 echo " Rabbit:    amqp://${RABBIT_FQDN}:5672"
+echo " MongoDB:   mongodb://${MONGO_FQDN}:27017 (db=${MONGO_DATABASE_NAME})"
 echo "============================================================================"

@@ -1,5 +1,5 @@
 # SolarMetrics — Pipeline CI/CD única (Aula 19: criarInfra → BuildApp → DeployApp)
-# Secrets no Azure DevOps (Variables): WALLET_URL, ORACLE_PASSWORD; opcional JWT_KEY
+# Secrets no Azure DevOps (Variables): WALLET_URL, ORACLE_PASSWORD; opcional JWT_KEY, MONGO_PASSWORD
 # Service connection Azure: ajuste azureServiceConnection (padrão MyAzureSubscription)
 
 trigger:
@@ -23,6 +23,12 @@ variables:
   webappWeb: solarmetrics-web
   rabbitContainer: aci-solarmetrics-rabbitmq
   rabbitDns: solarmetrics-rmq
+  mongoContainer: aci-solarmetrics-mongodb
+  mongoDns: solarmetrics-mongo
+  mongoUser: admin
+  mongoDatabaseName: solarmetrics
+  mongoCollection: chatbot_interactions
+  mongoPasswordDefault: SolarMetricsMongo1
   gitUrlJava: https://github.com/ARC-ceo/SolarMetrics-JavaAdvanced.git
   gitUrlDotnet: https://github.com/bmvck/SolarMetrics-Dotnet.git
   gitBranch: main
@@ -39,7 +45,7 @@ stages:
     displayName: Criar ou atualizar infraestrutura Azure
     jobs:
       - job: provisionarRecursos
-        displayName: RG, Insights, Plano, RabbitMQ e Web Apps
+        displayName: RG, Insights, Plano, RabbitMQ, MongoDB e Web Apps
         steps:
           - task: AzureCLI@2
             displayName: Provisionar infra SolarMetrics
@@ -81,6 +87,22 @@ stages:
                 RABBIT_FQDN="$(az container show --name "$(rabbitContainer)" --resource-group "${RG}" --query ipAddress.fqdn -o tsv)"
                 echo "RabbitMQ: ${RABBIT_FQDN}:5672"
 
+                if ! az container show --name "$(mongoContainer)" --resource-group "${RG}" &>/dev/null; then
+                  MONGO_PASS="${MONGO_PASSWORD:-$(mongoPasswordDefault)}"
+                  az container create --resource-group "${RG}" --location "${LOC}" \
+                    --name "$(mongoContainer)" --image mongo:7 --os-type Linux \
+                    --dns-name-label "$(mongoDns)" --ports 27017 --cpu 1 --memory 1.5 \
+                    --environment-variables \
+                      MONGO_INITDB_ROOT_USERNAME="$(mongoUser)" \
+                      MONGO_INITDB_ROOT_PASSWORD="${MONGO_PASS}" \
+                    --output none
+                fi
+                MONGO_FQDN="$(az container show --name "$(mongoContainer)" --resource-group "${RG}" --query ipAddress.fqdn -o tsv)"
+                [[ -n "${MONGO_FQDN}" ]] || { echo "FQDN MongoDB vazio"; exit 1; }
+                MONGO_PASS="${MONGO_PASSWORD:-$(mongoPasswordDefault)}"
+                MONGO_CONN="mongodb://$(mongoUser):${MONGO_PASS}@${MONGO_FQDN}:27017/?authSource=admin"
+                echo "MongoDB: ${MONGO_FQDN}:27017"
+
                 for ENTRY in "$(webappJava)|JAVA:17-java17" "$(webappApi)|DOTNETCORE:8.0" "$(webappWeb)|DOTNETCORE:8.0"; do
                   APP_NAME="${ENTRY%%|*}"
                   RUNTIME="${ENTRY#*|}"
@@ -117,7 +139,12 @@ stages:
                   ApplicationInsightsAgent_EXTENSION_VERSION=~3 \
                   "ConnectionStrings__OracleDb=${DOTNET_CONN}" \
                   "Jwt__Key=${JWT_KEY}" Jwt__Issuer=SolarMetrics Jwt__Audience=SolarMetrics \
-                  ASPNETCORE_ENVIRONMENT=Staging --output none
+                  ASPNETCORE_ENVIRONMENT=Staging \
+                  MongoDb__Enabled=true \
+                  "MongoDb__ConnectionString=${MONGO_CONN}" \
+                  MongoDb__DatabaseName="$(mongoDatabaseName)" \
+                  MongoDb__ChatbotInteractionsCollection="$(mongoCollection)" \
+                  --output none
 
                 az webapp config appsettings set --name "$(webappWeb)" --resource-group "${RG}" --settings \
                   APPLICATIONINSIGHTS_CONNECTION_STRING="${AI_CS}" \
@@ -125,7 +152,12 @@ stages:
                   "Api__BaseUrl=${API_URL}" \
                   "ConnectionStrings__OracleDb=${DOTNET_CONN}" \
                   "Jwt__Key=${JWT_KEY}" Jwt__Issuer=SolarMetrics Jwt__Audience=SolarMetrics \
-                  Jwt__ExpirationMinutes=120 ASPNETCORE_ENVIRONMENT=Production --output none
+                  Jwt__ExpirationMinutes=120 ASPNETCORE_ENVIRONMENT=Production \
+                  MongoDb__Enabled=true \
+                  "MongoDb__ConnectionString=${MONGO_CONN}" \
+                  MongoDb__DatabaseName="$(mongoDatabaseName)" \
+                  MongoDb__ChatbotInteractionsCollection="$(mongoCollection)" \
+                  --output none
 
                 for APP in "$(webappJava)" "$(webappApi)" "$(webappWeb)"; do
                   az monitor app-insights component connect-webapp \
