@@ -39,6 +39,7 @@ variables:
   artifactApi: solarmetrics-api
   artifactWeb: solarmetrics-web
   artifactJava: solarmetrics-java
+  deployTimeoutMs: 1800000
 
 stages:
   - stage: criarInfra
@@ -140,6 +141,11 @@ stages:
                   "ConnectionStrings__OracleDb=${DOTNET_CONN}" \
                   "Jwt__Key=${JWT_KEY}" Jwt__Issuer=SolarMetrics Jwt__Audience=SolarMetrics \
                   ASPNETCORE_ENVIRONMENT=Staging \
+                  WEBSITES_PORT=8080 \
+                  WEBSITES_CONTAINER_START_TIME_LIMIT=1800 \
+                  ASPNETCORE_FORWARDEDHEADERS_ENABLED=true \
+                  SCM_DO_BUILD_DURING_DEPLOYMENT=false \
+                  WEBSITE_HEALTHCHECK_PATH=/health/live \
                   MongoDb__Enabled=true \
                   "MongoDb__ConnectionString=${MONGO_CONN}" \
                   MongoDb__DatabaseName="$(mongoDatabaseName)" \
@@ -153,6 +159,11 @@ stages:
                   "ConnectionStrings__OracleDb=${DOTNET_CONN}" \
                   "Jwt__Key=${JWT_KEY}" Jwt__Issuer=SolarMetrics Jwt__Audience=SolarMetrics \
                   Jwt__ExpirationMinutes=120 ASPNETCORE_ENVIRONMENT=Production \
+                  WEBSITES_PORT=8080 \
+                  WEBSITES_CONTAINER_START_TIME_LIMIT=1800 \
+                  ASPNETCORE_FORWARDEDHEADERS_ENABLED=true \
+                  SCM_DO_BUILD_DURING_DEPLOYMENT=false \
+                  WEBSITE_HEALTHCHECK_PATH=/Account/Login \
                   MongoDb__Enabled=true \
                   "MongoDb__ConnectionString=${MONGO_CONN}" \
                   MongoDb__DatabaseName="$(mongoDatabaseName)" \
@@ -224,7 +235,7 @@ stages:
                 download_repo "$(gitUrlDotnet)" "$(gitBranch)" dotnet-src
                 PUB="${WORK}/dotnet-api-publish"
                 rm -rf "${PUB}"
-                dotnet publish "${WORK}/dotnet-src/SolarMetrics.API/SolarMetrics.API.csproj" -c Release -o "${PUB}"
+                dotnet publish "${WORK}/dotnet-src/SolarMetrics.API/SolarMetrics.API.csproj" -c Release -o "${PUB}" /p:PublishReadyToRun=true
                 mkdir -p "${PUB}/wallet"
                 cp -r "${WORK}/wallet-flat/"* "${PUB}/wallet/"
                 ZIP="${WORK}/dotnet-api.zip"
@@ -248,7 +259,7 @@ stages:
                 WORK="$(buildWorkDir)"
                 PUB="${WORK}/dotnet-web-publish"
                 rm -rf "${PUB}"
-                dotnet publish "${WORK}/dotnet-src/SolarMetrics.Web/SolarMetrics.Web.csproj" -c Release -o "${PUB}"
+                dotnet publish "${WORK}/dotnet-src/SolarMetrics.Web/SolarMetrics.Web.csproj" -c Release -o "${PUB}" /p:PublishReadyToRun=true
                 mkdir -p "${PUB}/wallet"
                 cp -r "${WORK}/wallet-flat/"* "${PUB}/wallet/"
                 ZIP="${WORK}/dotnet-web.zip"
@@ -336,7 +347,7 @@ stages:
               path: $(Pipeline.Workspace)/deploy/$(artifactJava)
 
           - task: AzureCLI@2
-            displayName: Deploy API .NET
+            displayName: Deploy API, MVC e Java (.NET otimizado)
             inputs:
               azureSubscription: $(azureServiceConnection)
               scriptType: bash
@@ -345,14 +356,28 @@ stages:
                 set -euo pipefail
                 RG="$(resourceGroup)"
                 SUB="$(azureSubscription)"
+                DEPLOY_TIMEOUT="$(deployTimeoutMs)"
                 [[ -z "${SUB}" ]] || az account set --subscription "${SUB}"
-                DEPLOY_DIR="$(Pipeline.Workspace)/deploy/$(artifactApi)"
-                ZIP="$(find "${DEPLOY_DIR}" -maxdepth 3 -name 'dotnet-api.zip' -type f 2>/dev/null | head -1)"
-                [[ -z "${ZIP}" ]] && ZIP="$(find "${DEPLOY_DIR}" -maxdepth 3 -name '*.zip' -type f 2>/dev/null | head -1)"
-                [[ -f "${ZIP}" ]] || { echo "ZIP API não encontrado em ${DEPLOY_DIR}"; ls -laR "${DEPLOY_DIR}" 2>/dev/null || true; exit 1; }
+
+                wait_for_url() {
+                  local url="$1" label="$2" max="${3:-36}" interval="${4:-10}"
+                  for i in $(seq 1 "${max}"); do
+                    code="$(curl -fsS -o /dev/null -w "%{http_code}" --max-time 20 -L "${url}" 2>/dev/null || echo "000")"
+                    if [[ "${code}" =~ ^(200|301|302|401|403|404)$ ]]; then
+                      echo "${label} respondendo (HTTP ${code}): ${url}"
+                      return 0
+                    fi
+                    echo "Aguardando ${label} (${i}/${max}) HTTP ${code} — ${url}"
+                    sleep "${interval}"
+                  done
+                  echo "AVISO: ${label} não respondeu a tempo: ${url}" >&2
+                  return 1
+                }
+
                 deploy_with_fallback() {
                   local app="$1" z="$2"
-                  if ! az webapp deploy -g "${RG}" -n "${app}" --src-path "${z}" --type zip --clean true --timeout 600000; then
+                  echo ">> Deploy ${app} ($(du -h "${z}" | cut -f1))"
+                  if ! az webapp deploy -g "${RG}" -n "${app}" --src-path "${z}" --type zip --timeout "${DEPLOY_TIMEOUT}"; then
                     echo "Fallback Kudu zipdeploy para ${app}"
                     KU=$(az webapp deployment list-publishing-profiles -g "${RG}" -n "${app}" \
                       --query "[?contains(publishUrl,'scm.azurewebsites.net')].userName | [0]" -o tsv)
@@ -362,66 +387,36 @@ stages:
                       --data-binary "@${z}" "https://${app}.scm.azurewebsites.net/api/zipdeploy?isAsync=false"
                   fi
                 }
-                deploy_with_fallback "$(webappApi)" "${ZIP}"
 
-          - task: AzureCLI@2
-            displayName: Deploy MVC .NET
-            inputs:
-              azureSubscription: $(azureServiceConnection)
-              scriptType: bash
-              scriptLocation: inlineScript
-              inlineScript: |
-                set -euo pipefail
-                RG="$(resourceGroup)"
-                SUB="$(azureSubscription)"
-                [[ -z "${SUB}" ]] || az account set --subscription "${SUB}"
-                DEPLOY_DIR="$(Pipeline.Workspace)/deploy/$(artifactWeb)"
-                ZIP="$(find "${DEPLOY_DIR}" -maxdepth 3 -name 'dotnet-web.zip' -type f 2>/dev/null | head -1)"
-                [[ -z "${ZIP}" ]] && ZIP="$(find "${DEPLOY_DIR}" -maxdepth 3 -name '*.zip' -type f 2>/dev/null | head -1)"
-                [[ -f "${ZIP}" ]] || { echo "ZIP Web não encontrado em ${DEPLOY_DIR}"; ls -laR "${DEPLOY_DIR}" 2>/dev/null || true; exit 1; }
-                if ! az webapp deploy -g "${RG}" -n "$(webappWeb)" --src-path "${ZIP}" --type zip --clean true --timeout 600000; then
-                  KU=$(az webapp deployment list-publishing-profiles -g "${RG}" -n "$(webappWeb)" \
-                    --query "[?contains(publishUrl,'scm.azurewebsites.net')].userName | [0]" -o tsv)
-                  KP=$(az webapp deployment list-publishing-profiles -g "${RG}" -n "$(webappWeb)" \
-                    --query "[?contains(publishUrl,'scm.azurewebsites.net')].userPWD | [0]" -o tsv)
-                  curl -fsS -X POST -u "${KU}:${KP}" -H "Content-Type: application/octet-stream" \
-                    --data-binary "@${ZIP}" "https://$(webappWeb).scm.azurewebsites.net/api/zipdeploy?isAsync=false"
-                fi
+                find_zip() {
+                  local dir="$1" preferred="$2"
+                  local z
+                  z="$(find "${dir}" -maxdepth 3 -name "${preferred}" -type f 2>/dev/null | head -1)"
+                  [[ -z "${z}" ]] && z="$(find "${dir}" -maxdepth 3 -name '*.zip' -type f 2>/dev/null | head -1)"
+                  [[ -f "${z}" ]] || { echo "ZIP não encontrado em ${dir}"; ls -laR "${dir}" 2>/dev/null || true; exit 1; }
+                  echo "${z}"
+                }
 
-          - task: AzureCLI@2
-            displayName: Deploy Java
-            continueOnError: true
-            inputs:
-              azureSubscription: $(azureServiceConnection)
-              scriptType: bash
-              scriptLocation: inlineScript
-              inlineScript: |
-                set -euo pipefail
-                RG="$(resourceGroup)"
-                SUB="$(azureSubscription)"
-                [[ -z "${SUB}" ]] || az account set --subscription "${SUB}"
-                DEPLOY_DIR="$(Pipeline.Workspace)/deploy/$(artifactJava)"
-                ZIP="$(find "${DEPLOY_DIR}" -maxdepth 3 -name 'java-deploy.zip' -type f 2>/dev/null | head -1)"
-                [[ -z "${ZIP}" ]] && ZIP="$(find "${DEPLOY_DIR}" -maxdepth 3 -name '*.zip' -type f 2>/dev/null | head -1)"
-                if [[ ! -f "${ZIP}" ]]; then
+                API_DIR="$(Pipeline.Workspace)/deploy/$(artifactApi)"
+                WEB_DIR="$(Pipeline.Workspace)/deploy/$(artifactWeb)"
+                JAVA_DIR="$(Pipeline.Workspace)/deploy/$(artifactJava)"
+
+                API_ZIP="$(find_zip "${API_DIR}" "dotnet-api.zip")"
+                deploy_with_fallback "$(webappApi)" "${API_ZIP}"
+                wait_for_url "https://$(webappApi).azurewebsites.net/health/live" "API .NET" 36 10
+
+                WEB_ZIP="$(find_zip "${WEB_DIR}" "dotnet-web.zip")"
+                deploy_with_fallback "$(webappWeb)" "${WEB_ZIP}"
+                wait_for_url "https://$(webappWeb).azurewebsites.net/Account/Login" "MVC .NET" 36 10
+
+                JAVA_ZIP="$(find "${JAVA_DIR}" -maxdepth 3 -name 'java-deploy.zip' -type f 2>/dev/null | head -1 || true)"
+                [[ -z "${JAVA_ZIP}" ]] && JAVA_ZIP="$(find "${JAVA_DIR}" -maxdepth 3 -name '*.zip' -type f 2>/dev/null | head -1 || true)"
+                if [[ -f "${JAVA_ZIP}" ]]; then
+                  deploy_with_fallback "$(webappJava)" "${JAVA_ZIP}" || echo "AVISO: deploy Java falhou."
+                else
                   echo "Artefato Java ausente — deploy Java ignorado."
-                  exit 0
                 fi
-                az webapp deploy -g "${RG}" -n "$(webappJava)" --src-path "${ZIP}" --type zip --timeout 600000 \
-                  || echo "AVISO: deploy Java falhou."
 
-          - task: AzureCLI@2
-            displayName: Reiniciar Web Apps e exibir URLs
-            inputs:
-              azureSubscription: $(azureServiceConnection)
-              scriptType: bash
-              scriptLocation: inlineScript
-              inlineScript: |
-                set -euo pipefail
-                RG="$(resourceGroup)"
-                for APP in "$(webappJava)" "$(webappApi)" "$(webappWeb)"; do
-                  az webapp restart -g "${RG}" -n "${APP}" --output none
-                done
                 echo "============================================"
                 echo " Java:     https://$(webappJava).azurewebsites.net"
                 echo " API .NET: https://$(webappApi).azurewebsites.net"

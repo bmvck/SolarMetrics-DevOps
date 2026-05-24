@@ -302,6 +302,11 @@ az webapp config appsettings set \
     "Jwt__Issuer=SolarMetrics" \
     "Jwt__Audience=SolarMetrics" \
     ASPNETCORE_ENVIRONMENT="Staging" \
+    WEBSITES_PORT="8080" \
+    WEBSITES_CONTAINER_START_TIME_LIMIT="1800" \
+    ASPNETCORE_FORWARDEDHEADERS_ENABLED="true" \
+    SCM_DO_BUILD_DURING_DEPLOYMENT="false" \
+    WEBSITE_HEALTHCHECK_PATH="/health/live" \
     MongoDb__Enabled=true \
     "MongoDb__ConnectionString=${MONGO_CONN}" \
     MongoDb__DatabaseName="${MONGO_DATABASE_NAME}" \
@@ -325,6 +330,11 @@ az webapp config appsettings set \
     "Jwt__Audience=SolarMetrics" \
     "Jwt__ExpirationMinutes=120" \
     ASPNETCORE_ENVIRONMENT="Production" \
+    WEBSITES_PORT="8080" \
+    WEBSITES_CONTAINER_START_TIME_LIMIT="1800" \
+    ASPNETCORE_FORWARDEDHEADERS_ENABLED="true" \
+    SCM_DO_BUILD_DURING_DEPLOYMENT="false" \
+    WEBSITE_HEALTHCHECK_PATH="/Account/Login" \
     MongoDb__Enabled=true \
     "MongoDb__ConnectionString=${MONGO_CONN}" \
     MongoDb__DatabaseName="${MONGO_DATABASE_NAME}" \
@@ -569,7 +579,7 @@ fi
 
 DOTNET_PUB="${WORK_DIR}/dotnet-publish"
 rm -rf "${DOTNET_PUB}"
-dotnet publish "${DOTNET_CLONE}/SolarMetrics.API/SolarMetrics.API.csproj" -c Release -o "${DOTNET_PUB}"
+dotnet publish "${DOTNET_CLONE}/SolarMetrics.API/SolarMetrics.API.csproj" -c Release -o "${DOTNET_PUB}" /p:PublishReadyToRun=true
 
 mkdir -p "${DOTNET_PUB}/wallet"
 cp -r "${WORK_DIR}/wallet-flat/"* "${DOTNET_PUB}/wallet/"
@@ -589,8 +599,7 @@ az webapp deploy \
   --name "${WEBAPP_DOTNET_NAME}" \
   --src-path "${DOTNET_DEPLOY_SRC}" \
   --type zip \
-  --clean true \
-  --timeout 600000
+  --timeout 1800000
 DOTNET_DEPLOY_EC=$?
 set -e
 if [[ "${DOTNET_DEPLOY_EC}" -ne 0 ]]; then
@@ -604,7 +613,7 @@ fi
 echo ">> [2/3] Publish + deploy SolarMetrics.Web → ${WEBAPP_WEB_NAME}..."
 WEB_PUB="${WORK_DIR}/dotnet-web-publish"
 rm -rf "${WEB_PUB}"
-dotnet publish "${DOTNET_CLONE}/SolarMetrics.Web/SolarMetrics.Web.csproj" -c Release -o "${WEB_PUB}"
+dotnet publish "${DOTNET_CLONE}/SolarMetrics.Web/SolarMetrics.Web.csproj" -c Release -o "${WEB_PUB}" /p:PublishReadyToRun=true
 
 mkdir -p "${WEB_PUB}/wallet"
 cp -r "${WORK_DIR}/wallet-flat/"* "${WEB_PUB}/wallet/"
@@ -623,8 +632,7 @@ az webapp deploy \
   --name "${WEBAPP_WEB_NAME}" \
   --src-path "${WEB_DEPLOY_SRC}" \
   --type zip \
-  --clean true \
-  --timeout 600000
+  --timeout 1800000
 WEB_DEPLOY_EC=$?
 set -e
 if [[ "${WEB_DEPLOY_EC}" -ne 0 ]]; then
@@ -680,7 +688,7 @@ deploy_java_best_effort() {
     --name "${WEBAPP_JAVA_NAME}" \
     --src-path "${JZIP}" \
     --type zip \
-    --timeout 600000 \
+    --timeout 1800000 \
     && echo ">> Deploy Java OK." \
     || echo "AVISO: az webapp deploy (Java) falhou."
   set -e

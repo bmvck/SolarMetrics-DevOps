@@ -88,7 +88,7 @@ Este stage é **CI**: compila, empacota e publica artefatos versionados na execu
 | Step | Função |
 |------|--------|
 | **DownloadPipelineArtifact@2** | Recupera os três ZIPs (Java opcional). |
-| **Deploy API / Web / Java** | `az webapp deploy --type zip`; fallback **Kudu** `/api/zipdeploy` se OneDeploy retornar erro. |
+| **Deploy API / Web / Java** | Deploy **sequencial** (API → health → MVC → health → Java); `az webapp deploy` **sem** `--clean true`; timeout **30 min**; fallback Kudu; **sem restart em massa** no final. |
 | **Restart + URLs** | Reinicia as apps e imprime endpoints para teste e gravação do vídeo. |
 
 Este stage é **CD da aplicação**: leva os binários produzidos no CI até o App Service em produção acadêmica.
